@@ -5,6 +5,10 @@ export IMAGE_SHA := `git rev-parse HEAD | cut -c-12`
 help:
 	@just --list --unsorted
 
+# Bake a container image
+bake:
+	docker buildx bake --load -f docker-bake.hcl
+
 # Format and lint Go code
 check:
 	gofmt -s -w .
