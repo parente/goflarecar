@@ -22,9 +22,6 @@ import (
 )
 
 const (
-	// CF_JWKS_URL_ENV is the environment variable for the Cloudflare JWKS URL, the signing keys
-	// for Cloudflare Access JWTs.
-	CF_JWKS_URL_ENV = "CF_JWKS_URL"
 	// CF_ISSUER_URL_ENV is the environment variable for the issuer URL of the Cloudflare Access
 	// team domain, https:// <your-team-name>.cloudflareaccess.com
 	CF_ISSUER_URL_ENV = "CF_ISSUER_URL"
