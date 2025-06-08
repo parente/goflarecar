@@ -1,5 +1,4 @@
-// go.mod
-module github.com/parente/go-cfa-proxy
+module github.com/parente/cloudflarecar
 
 go 1.24.0
 

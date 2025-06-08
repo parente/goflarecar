@@ -9,10 +9,10 @@ COPY *.go .
 ARG TARGETARCH
 ARG TARGETOS
 
-RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /go/bin/goflarewatch
+RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /go/bin/goflarecar
 
 FROM scratch AS bin
-LABEL org.opencontainers.image.source=https://github.com/parente/goflarewatch
-COPY --from=builder /go/bin/goflarewatch /go/bin/goflarewatch
+LABEL org.opencontainers.image.source=https://github.com/parente/goflarecar
+COPY --from=builder /go/bin/goflarecar /go/bin/goflarecar
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-ENTRYPOINT ["/go/bin/goflarewatch"]
+ENTRYPOINT ["/go/bin/goflarecar"]
