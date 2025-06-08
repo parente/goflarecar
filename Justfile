@@ -1,4 +1,4 @@
-export IMAGE_TAG := env_var_or_default("IMAGE_TAG", "latest")
+export IMAGE_LATEST := "latest"
 export IMAGE_SHA := `git rev-parse HEAD | cut -c-12`
 
 # List targets (local)
