@@ -1,0 +1,15 @@
+resources:
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+
+configMapGenerator:
+  - name: echo-sidecar
+    envs:
+      - .configmap.env
+
+patches:
+  - target:
+      kind: Ingress
+      name: echo-sidecar
+    path: .ingress.yaml

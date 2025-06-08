@@ -31,4 +31,7 @@ jobs:
         env:
           # Only populate tag on a release
           IMAGE_TAG: "${{ github.event_name == 'release' && github.ref_name || '' }}"
+          # Populate latest tag on main branch
+          IMAGE_LATEST: "${{ github.ref_name == 'main' && 'latest' || '' }}"
+          # Populate sha tag on every push
           IMAGE_SHA: "${{ github.sha }}"
