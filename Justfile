@@ -11,6 +11,11 @@ bake:
 
 # Format and lint Go code
 check:
+	#!/bin/bash
+	gofmt -s -w .
+	golangci-lint run
+
+	pushd examples/echo_server
 	gofmt -s -w .
 	golangci-lint run
 

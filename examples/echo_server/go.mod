@@ -1,9 +1,9 @@
-module github.com/parente/cloudflarecar
+module github.com/parente/cloudflarecar/examples/echo_server
 
-go 1.24.0
+go 1.24.2
 
 require (
-	github.com/go-jose/go-jose/v4 v4.1.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/sirupsen/logrus v1.9.3
 )
 
