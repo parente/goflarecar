@@ -29,5 +29,6 @@ jobs:
           source: .
           push: true
         env:
-          IMAGE_TAG: "${{ github.ref_name }}"
+          # Only populate tag on a release
+          IMAGE_TAG: "${{ github.event_name == 'release' && github.ref_name || '' }}"
           IMAGE_SHA: "${{ github.sha }}"

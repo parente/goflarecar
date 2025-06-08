@@ -12,7 +12,7 @@ target "goflarecar" {
   platforms = ["linux/amd64", "linux/arm64"]
   tags = [
     "${IMAGE_REPO}:${IMAGE_SHA}",
-    "${IMAGE_REPO}:${IMAGE_TAG}",
+    equal("${IMAGE_TAG}", "") ? "" : "${IMAGE_REPO}:${IMAGE_TAG}",
     equal("${IMAGE_TAG}", "main") ? "${IMAGE_REPO}:latest" : "",
   ]
 }
@@ -23,7 +23,7 @@ target "echo-example" {
   platforms  = ["linux/amd64", "linux/arm64"]
   tags = [
     "${IMAGE_REPO}-echo:${IMAGE_SHA}",
-    "${IMAGE_REPO}-echo:${IMAGE_TAG}",
-    equal("${IMAGE_TAG}", "main") ? "${IMAGE_REPO}:latest" : "",
+    equal("${IMAGE_TAG}", "") ? "" : "${IMAGE_REPO}-echo:${IMAGE_TAG}",
+    equal("${IMAGE_TAG}", "main") ? "${IMAGE_REPO}-echo:latest" : "",
   ]
 }
