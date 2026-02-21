@@ -20,7 +20,8 @@ check:
 	golangci-lint run
 
 	pushd examples/echo_server
-	gofmt -s -w . && golangci-lint run
+	gofmt -s -w .
+	golangci-lint run
 	popd
 
 kustomize:
