@@ -1,5 +1,5 @@
 __pycache__
 .configmap.env
-.ingress.yaml
 .venv
+.ingress.yaml
 goflarecar
