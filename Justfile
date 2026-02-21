@@ -17,6 +17,8 @@ bake:
 # Format and lint Go code
 check:
 	#!/bin/bash
+	set -euxo pipefail
+
 	gofmt -s -w .
 	golangci-lint run
 
@@ -34,15 +36,6 @@ kustomize:
 	cat <<EOF >.configmap.env
 	CF_ISSUER_URL={{CF_ISSUER_URL}}
 	CF_AUDIENCE_TAG={{CF_AUDIENCE_TAG}}
-	EOF
-
-	cat <<EOF >.ingress.yaml
-	- op: replace
-	  path: /spec/rules/0/host
-	  value: {{INGRESS_HOST}}
-	- op: replace
-	  path: /spec/tls/0/hosts/0
-	  value: {{INGRESS_HOST}}
 	EOF
 
 	kustomize build .

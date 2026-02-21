@@ -3,10 +3,13 @@ kind: Service
 metadata:
   name: echo-sidecar
 spec:
-  type: ClusterIP
+  type: LoadBalancer
   selector:
     app.kubernetes.io/name: echo-sidecar
   ports:
     - name: http
-      port: 80
+      port: 8080
+      targetPort: proxy-port
+    - name: https
+      port: 8443
       targetPort: proxy-port
