@@ -10,7 +10,16 @@ terraform {
   }
 }
 
-provider "cloudflare" {}
+provider "cloudflare" {
+  api_token = var.cf_api_token
+}
+
+locals {
+  # Extract the root domain from the application domain for zone ID lookup
+  _domain_parts     = split(".", var.cf_app_domain)
+  _domain_length    = length(local._domain_parts)
+  cf_account_domain = join(".", slice(local._domain_parts, local._domain_length - 2, local._domain_length))
+}
 
 # Create an identity provider based on emailed one-time PINs
 resource "cloudflare_zero_trust_access_identity_provider" "email_pin" {
@@ -45,9 +54,16 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "goflarecar" {
   }
 }
 
+# Get the zone ID for the root domain hosting the app
+data "cloudflare_zone" "goflarecar" {
+  filter = {
+    name = local.cf_account_domain
+  }
+}
+
 # Create a public DNS record for the tunnel
 resource "cloudflare_dns_record" "goflarecar" {
-  zone_id = var.cf_zone_id
+  zone_id = data.cloudflare_zone.goflarecar.id
   name    = var.cf_app_domain
   content = "${cloudflare_zero_trust_tunnel_cloudflared.goflarecar.id}.cfargotunnel.com"
   type    = "CNAME"
@@ -69,12 +85,14 @@ resource "cloudflare_zero_trust_access_policy" "email_pin" {
   ]
 }
 
-# Create a Cloudflare Access application with the policy attached
+# Create a Cloudflare Access application with the policy attached, allowing auth through the
+# email PIN IdP only
 resource "cloudflare_zero_trust_access_application" "goflarecar" {
-  account_id = var.cf_account_id
-  type       = "self_hosted"
-  name       = "Access application for ${var.cf_app_domain}"
-  domain     = var.cf_app_domain
+  account_id   = var.cf_account_id
+  type         = "self_hosted"
+  name         = "Access application for ${var.cf_app_domain}"
+  domain       = var.cf_app_domain
+  allowed_idps = [cloudflare_zero_trust_access_identity_provider.email_pin.id]
   policies = [
     {
       id         = cloudflare_zero_trust_access_policy.email_pin.id

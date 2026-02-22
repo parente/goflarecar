@@ -1,5 +1,5 @@
 CF_ISSUER_URL := env_var_or_default("CF_ISSUER_URL", "https://placeholder.cloudflareaccess.com")
-CF_AUDIENCE_TAG := env_var_or_default("CF_AUDIENCE_TAG", "examplplaceholdere-audience")
+CF_AUDIENCE_TAG := env_var_or_default("CF_AUDIENCE_TAG", "example-placeholder-audience")
 export TUNNEL_TOKEN := env_var_or_default("CF_TUNNEL_TOKEN", "placeholder-tunnel-token")
 
 # List targets
