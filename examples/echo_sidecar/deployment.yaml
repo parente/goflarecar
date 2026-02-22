@@ -15,20 +15,28 @@ spec:
         app.kubernetes.io/name: echo-sidecar
     spec:
       containers:
+        # Pull the latest echo server image which listens on port 8081
         - name: echo
           image: ghcr.io/parente/goflarecar-echo:latest
           imagePullPolicy: Always
+        # Pull the latest proxy image and ensure it listens on port 8080
+        # In a production setting, use a stable release tag instead of latest.
         - name: goflarecar
           image: ghcr.io/parente/goflarecar:latest
           imagePullPolicy: Always
           ports:
+            # Name the proxy port for easier reference in the Kubernetes Service resource
             - containerPort: 8080
               name: proxy-port
           env:
+            # Configure the proxy to send all traffic to the echo server within the Pod
             - name: UPSTREAM_APP_URL
               value: "http://127.0.0.1:8081"
+            # For demo purposes, pass the validated JSON claims as a header
             - name: PROXY_PASS_JSON_CLAIMS
               value: "yes"
           envFrom:
+            # Load required CF_AUDIENCE_TAG and CF_ISSUER_URL from the kustomize generated ConfigMap
+            # In a production setting, consider using a Secret for CF_AUDIENCE_TAG instead
             - configMapRef:
                 name: echo-sidecar

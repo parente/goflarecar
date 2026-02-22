@@ -10,6 +10,3 @@ spec:
     - name: http
       port: 8080
       targetPort: proxy-port
-    - name: https
-      port: 8443
-      targetPort: proxy-port
