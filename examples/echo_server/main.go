@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	htmpl "html/template"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -187,6 +188,73 @@ func processRequest(headers http.Header) map[string]interface{} {
 	return responseData
 }
 
+// httpResponsePageData holds the data injected into the HTTP response HTML page.
+type httpResponsePageData struct {
+	DataJSON htmpl.JS
+}
+
+// httpResponsePageTmpl is the HTML template for the HTTP response page.
+// It shares the same card-based layout and CSS as the WebSocket demo page.
+var httpResponsePageTmpl = htmpl.Must(htmpl.New("http").Parse(httpResponsePageTmplStr))
+
+const httpResponsePageTmplStr = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HTTP Echo Demo</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #222; padding: 1.5rem; }
+  h1 { font-size: 1.25rem; margin-bottom: 1rem; }
+  .card { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
+  .card h2 { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em; color: #666; margin-bottom: 0.5rem; }
+  pre { font-size: 0.8rem; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; background: #f9f9f9; border-radius: 4px; padding: 0.5rem; }
+  #loggedInAs { font-size: 0.9rem; color: #374151; }
+  .error { color: #991b1b; }
+</style>
+</head>
+<body>
+<h1>HTTP Echo Demo</h1>
+
+<div class="card">
+  <h2>Cloudflare Identity</h2>
+  <p id="loggedInAs" style="margin-bottom:0.5rem;"></p>
+  <pre id="identity">Loading…</pre>
+</div>
+
+<div class="card">
+  <h2>Full Response Data</h2>
+  <pre id="responseData"></pre>
+</div>
+
+<script>
+var DATA = {{.DataJSON}};
+(function () {
+  var loggedInAsEl  = document.getElementById('loggedInAs');
+  var identityEl    = document.getElementById('identity');
+  var responseDataEl = document.getElementById('responseData');
+
+  var identity = DATA.cloudflare_identity;
+  if (identity) {
+    identityEl.textContent = JSON.stringify(identity, null, 2);
+    if (identity.email) {
+      loggedInAsEl.textContent = 'Logged in as: ' + identity.email;
+    }
+  } else if (DATA.cloudflare_identity_error) {
+    identityEl.className = 'error';
+    identityEl.textContent = JSON.stringify(DATA.cloudflare_identity_error, null, 2);
+  } else {
+    identityEl.textContent = DATA.cloudflare_identity_info || 'No identity data';
+  }
+
+  responseDataEl.textContent = JSON.stringify(DATA, null, 2);
+}());
+</script>
+</body>
+</html>
+`
+
 // handleHTTPRequest processes incoming HTTP GET/POST requests.
 func handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 	// Process the request headers to get claims and Cloudflare identity.
@@ -208,19 +276,195 @@ func handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Set the Content-Type header to application/json.
-	w.Header().Set("Content-Type", "application/json")
-	// Write the determined status code to the response.
+	// Marshal response data to indented JSON for embedding in the HTML page.
+	jsonBytes, err := json.MarshalIndent(responseData, "", "  ")
+	if err != nil {
+		log.Errorf("Failed to marshal response data: %v", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(statusCode)
-	// Encode the response data to JSON and write it to the HTTP response body.
-	if err := json.NewEncoder(w).Encode(responseData); err != nil {
-		log.Errorf("Failed to write HTTP response: %v", err)
+	if err := httpResponsePageTmpl.Execute(w, httpResponsePageData{DataJSON: htmpl.JS(jsonBytes)}); err != nil {
+		log.Errorf("Failed to write HTTP response page: %v", err)
 	}
 }
 
+// demoPage is the HTML page served at /websocket for plain browser GET requests.
+// It auto-connects to the same URL as a WebSocket, displays the authenticated
+// Cloudflare identity returned as the first message, and provides an echo chat UI.
+const demoPage = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebSocket Echo Demo</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #222; padding: 1.5rem; }
+  h1 { font-size: 1.25rem; margin-bottom: 1rem; }
+  .card { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
+  .card h2 { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em; color: #666; margin-bottom: 0.5rem; }
+  #status { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.85rem; font-weight: 600; }
+  #status.connecting { background: #fef3c7; color: #92400e; }
+  #status.connected   { background: #d1fae5; color: #065f46; }
+  #status.closed      { background: #fee2e2; color: #991b1b; }
+  #identity { font-size: 0.8rem; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; background: #f9f9f9; border-radius: 4px; padding: 0.5rem; }
+  #log { list-style: none; font-size: 0.85rem; max-height: 240px; overflow-y: auto; }
+  #log li { padding: 0.25rem 0; border-bottom: 1px solid #f0f0f0; }
+  #log li.sent   { color: #1d4ed8; }
+  #log li.recv   { color: #065f46; }
+  #log li.system { color: #6b7280; font-style: italic; }
+  .send-row { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+  .send-row input  { flex: 1; padding: 0.4rem 0.6rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9rem; }
+  .send-row button { padding: 0.4rem 0.9rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9rem; }
+  #sendBtn { background: #2563eb; color: #fff; }
+  #sendBtn:disabled { background: #93c5fd; cursor: not-allowed; }
+  #disconnectBtn { background: #e5e7eb; color: #374151; }
+  #disconnectBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+  #loggedInAs { font-size: 0.9rem; color: #374151; }
+</style>
+</head>
+<body>
+<h1>WebSocket Echo Demo</h1>
+
+<div class="card">
+  <h2>Connection</h2>
+  <span id="status" class="connecting">Connecting…</span>
+  <span id="loggedInAs" style="margin-left:1rem;"></span>
+</div>
+
+<div class="card">
+  <h2>Cloudflare Identity</h2>
+  <pre id="identity">Waiting for server…</pre>
+</div>
+
+<div class="card">
+  <h2>Echo Log</h2>
+  <ul id="log"></ul>
+  <div class="send-row">
+    <input id="msgInput" type="text" placeholder="Type a message…" disabled />
+    <button id="sendBtn" disabled>Send</button>
+    <button id="disconnectBtn" disabled>Disconnect</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsURL = proto + '://' + location.host + '/websocket';
+
+  const statusEl      = document.getElementById('status');
+  const loggedInAsEl  = document.getElementById('loggedInAs');
+  const identityEl    = document.getElementById('identity');
+  const logEl         = document.getElementById('log');
+  const msgInput      = document.getElementById('msgInput');
+  const sendBtn       = document.getElementById('sendBtn');
+  const disconnectBtn = document.getElementById('disconnectBtn');
+
+  let firstMessage = true;
+  let ws;
+
+  function setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = cls;
+  }
+
+  function appendLog(text, cls) {
+    const ts = new Date().toLocaleTimeString();
+    const li = document.createElement('li');
+    li.className = cls;
+    li.textContent = ts + '  ' + text;
+    logEl.appendChild(li);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function connect() {
+    setStatus('Connecting…', 'connecting');
+    appendLog('Connecting to ' + wsURL, 'system');
+    ws = new WebSocket(wsURL);
+
+    ws.onopen = function () {
+      setStatus('Connected', 'connected');
+      appendLog('Connection established', 'system');
+      msgInput.disabled = false;
+      sendBtn.disabled = false;
+      disconnectBtn.disabled = false;
+      msgInput.focus();
+    };
+
+    ws.onmessage = function (evt) {
+      if (firstMessage) {
+        firstMessage = false;
+        try {
+          const data = JSON.parse(evt.data);
+          identityEl.textContent = JSON.stringify(data, null, 2);
+          const email = data.cloudflare_identity && data.cloudflare_identity.email;
+          if (email) {
+            loggedInAsEl.textContent = 'Logged in as: ' + email;
+          }
+        } catch (e) {
+          identityEl.textContent = evt.data;
+        }
+        return;
+      }
+      appendLog(evt.data, 'recv');
+    };
+
+    ws.onclose = function (evt) {
+      setStatus('Disconnected', 'closed');
+      appendLog('Connection closed (code ' + evt.code + ')', 'system');
+      msgInput.disabled = true;
+      sendBtn.disabled = true;
+      disconnectBtn.disabled = true;
+    };
+
+    ws.onerror = function () {
+      setStatus('Error', 'closed');
+      appendLog('WebSocket error', 'system');
+    };
+  }
+
+  sendBtn.addEventListener('click', function () {
+    const msg = msgInput.value.trim();
+    if (!msg || !ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(msg);
+    appendLog(msg, 'sent');
+    msgInput.value = '';
+    msgInput.focus();
+  });
+
+  msgInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') sendBtn.click();
+  });
+
+  disconnectBtn.addEventListener('click', function () {
+    if (ws) ws.close(1000, 'user disconnect');
+  });
+
+  connect();
+}());
+</script>
+</body>
+</html>
+`
+
 // websocketEndpoint handles incoming WebSocket connections.
+// For plain browser GET requests (no Upgrade header) it serves an interactive
+// HTML demo page that connects back to this same endpoint as a WebSocket.
 func websocketEndpoint(w http.ResponseWriter, r *http.Request) {
 	log.Infof("WebSocket connection request for path: %s", r.URL.Path)
+
+	// Serve the browser demo page for plain HTTP GET requests.
+	if r.Header.Get("Upgrade") != "websocket" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		if _, err := fmt.Fprint(w, demoPage); err != nil {
+			log.Errorf("Failed to write demo page response: %v", err)
+		}
+		return
+	}
 
 	// Process the request headers to get claims and Cloudflare identity.
 	responseData := processRequest(r.Header)
