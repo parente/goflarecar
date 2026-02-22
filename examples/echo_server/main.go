@@ -117,6 +117,27 @@ func fetchCloudflareIdentity(headers http.Header, cfAccessBaseURL string) (map[s
 	return identityData, nil
 }
 
+// validateCloudflareIssuer checks that a parsed issuer URL is a legitimate Cloudflare Access
+// team domain (https://<team>.cloudflareaccess.com). This prevents SSRF attacks where a
+// forged X-Authenticated-Claims-Issuer header could direct the server to make requests to
+// arbitrary hosts.
+func validateCloudflareIssuer(u *url.URL) error {
+	if u.Scheme != "https" {
+		return fmt.Errorf("issuer scheme must be https, got %q", u.Scheme)
+	}
+	// Host must be exactly <one-label>.cloudflareaccess.com with no port.
+	host := u.Hostname()
+	if !strings.HasSuffix(host, ".cloudflareaccess.com") {
+		return fmt.Errorf("issuer host %q is not a cloudflareaccess.com subdomain", host)
+	}
+	// Ensure there is exactly one label before .cloudflareaccess.com (no nested subdomains).
+	prefix := strings.TrimSuffix(host, ".cloudflareaccess.com")
+	if prefix == "" || strings.Contains(prefix, ".") {
+		return fmt.Errorf("issuer host %q has an unexpected subdomain structure", host)
+	}
+	return nil
+}
+
 // processRequest encapsulates common logic for processing both HTTP and WebSocket requests,
 // including parsing JWT claims and fetching Cloudflare identity.
 func processRequest(headers http.Header) map[string]interface{} {
@@ -135,6 +156,11 @@ func processRequest(headers http.Header) map[string]interface{} {
 		parsedIssuer, err := url.Parse(issuerURL)
 		if err != nil {
 			responseData["cloudflare_identity_error"] = map[string]string{"error": fmt.Sprintf("Invalid issuer URL: %v", err)}
+		} else if err := validateCloudflareIssuer(parsedIssuer); err != nil {
+			// Reject issuer URLs that do not match the expected Cloudflare Access domain shape
+			// to prevent SSRF via a forged X-Authenticated-Claims-Issuer header.
+			log.Warnf("Rejecting issuer URL %q: %v", issuerURL, err)
+			responseData["cloudflare_identity_error"] = map[string]string{"error": fmt.Sprintf("Untrusted issuer URL: %v", err)}
 		} else {
 			// Construct the base URL for Cloudflare Access.
 			cfBaseURL := fmt.Sprintf("%s://%s", parsedIssuer.Scheme, parsedIssuer.Host)
