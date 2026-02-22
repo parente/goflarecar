@@ -1,4 +1,4 @@
-module github.com/parente/cloudflarecar
+module github.com/parente/goflarecar
 
 go 1.26.0
 

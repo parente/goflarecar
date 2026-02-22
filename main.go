@@ -258,8 +258,8 @@ func main() {
 	go fetchJwksPeriodically(cfJwksURL, JWKS_REFRESH_INTERVAL)
 
 	// --- 3. Setup the Reverse Proxy for standard HTTP requests ---
-	// Create a new ReverseProxy instance.
-	rp := httputil.NewSingleHostReverseProxy(upstreamURL)
+	// Create a new ReverseProxy instance using only Rewrite (not Director).
+	rp := &httputil.ReverseProxy{}
 
 	// Use Rewrite to configure the outbound request.
 	rp.Rewrite = func(r *httputil.ProxyRequest) {
