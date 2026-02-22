@@ -16,9 +16,10 @@ import (
 	"sync"
 	"time"
 
+	"log/slog"
+
 	"github.com/go-jose/go-jose/v4"
 	gojose_jwt "github.com/go-jose/go-jose/v4/jwt"
-	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -58,7 +59,7 @@ type proxyHandler struct {
 
 // ServeHTTP handles incoming HTTP requests and WebSocket upgrade requests.
 func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Infof("Incoming request: %s %s from %s", r.Method, r.URL, r.RemoteAddr)
+	slog.Info("Incoming request", "method", r.Method, "url", r.URL, "remote_addr", r.RemoteAddr)
 
 	// Perform JWT validation.
 	// If this function returns false, it means authentication failed, and
@@ -69,14 +70,13 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Check if it's a WebSocket upgrade request
 	if isWebSocketUpgrade(r) {
-		log.Infof("Detected WebSocket upgrade request for %s. Handling...", r.URL)
+		slog.Info("Detected WebSocket upgrade request", "url", r.URL)
 		h.handleWebSocket(w, r)
 		return
 	}
 
 	// If not a WebSocket upgrade, proceed with standard HTTP proxying
-	log.Infof("Request authenticated for user with subject: %s. Proxying HTTP request to upstream.",
-		r.Header.Get("X-Authenticated-Claims-Subject"))
+	slog.Info("Request authenticated, proxying to upstream", "subject", r.Header.Get("X-Authenticated-Claims-Subject"))
 	h.reverseProxy.ServeHTTP(w, r)
 }
 
@@ -105,7 +105,7 @@ func (h *proxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// This request will be sent to the actual WebSocket server.
 	upstreamReq, err := http.NewRequest(r.Method, upstreamWSURL.String(), r.Body)
 	if err != nil {
-		log.Infof("Error creating upstream WebSocket request: %v", err)
+		slog.Error("Error creating upstream WebSocket request", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -122,7 +122,7 @@ func (h *proxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	dialer := net.Dialer{}
 	upstreamConn, err := dialer.Dial("tcp", h.upstreamURL.Host) // Dial raw TCP to upstream
 	if err != nil {
-		log.Errorf("Error dialing upstream WebSocket target %s: %v", h.upstreamURL.Host, err)
+		slog.Error("Error dialing upstream WebSocket target", "target", h.upstreamURL.Host, "error", err)
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		return
 	}
@@ -131,7 +131,7 @@ func (h *proxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Send the WebSocket upgrade request to the upstream server
 	err = upstreamReq.Write(upstreamConn)
 	if err != nil {
-		log.Errorf("Error writing WebSocket upgrade request to upstream: %v", err)
+		slog.Error("Error writing WebSocket upgrade request to upstream", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -140,13 +140,13 @@ func (h *proxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// and prevents http.Server from automatically closing it.
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
-		log.Error("HTTP server does not support hijacking connection")
+		slog.Error("HTTP server does not support hijacking connection")
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	clientConn, _, err := hijacker.Hijack()
 	if err != nil {
-		log.Errorf("Error hijacking client connection: %v", err)
+		slog.Error("Error hijacking client connection", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -159,11 +159,11 @@ func (h *proxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Read the upstream response (WebSocket handshake response)
 	resp, err := http.ReadResponse(upstreamReader, upstreamReq)
 	if err != nil {
-		log.Infof("Error reading upstream WebSocket handshake response: %v", err)
+		slog.Error("Error reading upstream WebSocket handshake response", "error", err)
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		err := clientConn.Close() // Close client if upstream handshake fails
 		if err != nil {
-			log.Warnf("Error closing client connection after upstream handshake failure: %v", err)
+			slog.Warn("Error closing client connection after upstream handshake failure", "error", err)
 		}
 		return
 	}
@@ -173,16 +173,16 @@ func (h *proxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// This completes the client-side WebSocket handshake.
 	err = resp.Write(clientConn) // Use resp.Write to write full response to clientConn
 	if err != nil {
-		log.Infof("Error writing WebSocket handshake response to client: %v", err)
+		slog.Error("Error writing WebSocket handshake response to client", "error", err)
 		err := clientConn.Close()
 		if err != nil {
-			log.Warnf("Error closing client connection after writing handshake response: %v", err)
+			slog.Warn("Error closing client connection after writing handshake response", "error", err)
 		}
 		return
 	}
 
 	// Now that the handshake is complete, copy data bidirectionally between client and upstream.
-	log.Infof("WebSocket handshake successful. Starting bidirectional data streaming between %s and %s", clientConn.RemoteAddr(), upstreamConn.RemoteAddr())
+	slog.Info("WebSocket handshake successful, starting bidirectional streaming", "client", clientConn.RemoteAddr(), "upstream", upstreamConn.RemoteAddr())
 
 	// Use a WaitGroup to ensure both copy goroutines are done before logging connection close.
 	var wg sync.WaitGroup
@@ -195,7 +195,7 @@ func (h *proxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		defer clientConn.Close()   // Close client when done copying from client side (if not already closed)
 		_, err := io.Copy(upstreamConn, clientConn)
 		if err != nil && err != io.EOF {
-			log.Infof("Error copying from client to upstream WebSocket: %v", err)
+			slog.Error("Error copying from client to upstream WebSocket", "error", err)
 		}
 	}()
 
@@ -206,32 +206,38 @@ func (h *proxyHandler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		defer upstreamConn.Close()                    // Close upstream when done copying from upstream side (if not already closed)
 		_, err := io.Copy(clientConn, upstreamReader) // Use the buffered reader here
 		if err != nil && err != io.EOF {
-			log.Infof("Error copying from upstream to client WebSocket: %v", err)
+			slog.Error("Error copying from upstream to client WebSocket", "error", err)
 		}
 	}()
 
 	wg.Wait() // Wait for both copy operations to finish
-	log.Infof("WebSocket connection closed for %s.", r.URL)
+	slog.Info("WebSocket connection closed", "url", r.URL)
 }
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
 	// --- 1. Load Configuration from Environment Variables ---
 	cfIssuerURL := os.Getenv(CF_ISSUER_URL_ENV)
 	if cfIssuerURL == "" {
-		log.Fatalf("Error: %s environment variable not set. This is the URL to the Cloudflare Access issuer endpoint (e.g., https://<your-team-name>.cloudflareaccess.com)", CF_ISSUER_URL_ENV)
+		slog.Error("Required environment variable not set", "var", CF_ISSUER_URL_ENV, "hint", "This is the URL to the Cloudflare Access issuer endpoint (e.g., https://<your-team-name>.cloudflareaccess.com)")
+		os.Exit(1)
 	}
 	cfAudTag := os.Getenv(CF_AUDIENCE_TAG_ENV)
 	if cfAudTag == "" {
-		log.Fatalf("Error: %s environment variable not set. This should be the audience tag for your Cloudflare Access application.", CF_AUDIENCE_TAG_ENV)
+		slog.Error("Required environment variable not set", "var", CF_AUDIENCE_TAG_ENV, "hint", "This should be the audience tag for your Cloudflare Access application.")
+		os.Exit(1)
 	}
 
 	upstreamAppURL := os.Getenv(UPSTREAM_APP_URL_ENV)
 	if upstreamAppURL == "" {
-		log.Fatalf("Error: %s environment variable not set. This should be the URL of your third-party application (e.g., http://localhost:8081).", UPSTREAM_APP_URL_ENV)
+		slog.Error("Required environment variable not set", "var", UPSTREAM_APP_URL_ENV, "hint", "This should be the URL of your third-party application (e.g., http://localhost:8081).")
+		os.Exit(1)
 	}
 	upstreamURL, err := url.Parse(upstreamAppURL)
 	if err != nil {
-		log.Fatalf("Error parsing upstream application URL '%s': %v", upstreamAppURL, err)
+		slog.Error("Error parsing upstream application URL", "url", upstreamAppURL, "error", err)
+		os.Exit(1)
 	}
 
 	proxyPassJSONClaims := false // Default to not passing validated JSON claims
@@ -244,17 +250,17 @@ func main() {
 		proxyListenAddr = ":8080" // Default listen address for the proxy
 	}
 
-	log.Infof("Proxy configured to expect issuer: %s, audience: %s", cfIssuerURL, cfAudTag)
-	log.Infof("Proxy configured to pass validated JSON claims to upstream: %t", proxyPassJSONClaims)
+	slog.Info("Proxy configuration", "issuer", cfIssuerURL, "audience", cfAudTag, "pass_json_claims", proxyPassJSONClaims)
 
 	// --- 2. Start Periodic JWKS Fetching ---
 	// This goroutine will periodically fetch the latest JWKS from Cloudflare.
 	// This is crucial for handling key rotations without restarting the proxy.
 	cfJwksURL, err := url.JoinPath(cfIssuerURL, "/cdn-cgi/access/certs")
 	if err != nil {
-		log.Fatalf("Error constructing JWKS URL from issuer URL '%s': %v", cfIssuerURL, err)
+		slog.Error("Error constructing JWKS URL from issuer URL", "issuer_url", cfIssuerURL, "error", err)
+		os.Exit(1)
 	}
-	log.Infof("Starting periodic JWKS fetch every %s from %s", JWKS_REFRESH_INTERVAL, cfJwksURL)
+	slog.Info("Starting periodic JWKS fetch", "interval", JWKS_REFRESH_INTERVAL, "url", cfJwksURL)
 	go fetchJwksPeriodically(cfJwksURL, JWKS_REFRESH_INTERVAL)
 
 	// --- 3. Setup the Reverse Proxy for standard HTTP requests ---
@@ -269,7 +275,7 @@ func main() {
 
 	// Custom error handler for standard HTTP reverse proxy.
 	rp.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
-		log.Errorf("Standard HTTP reverse proxy error for %s %s: %v", req.Method, req.URL, err)
+		slog.Error("Standard HTTP reverse proxy error", "method", req.Method, "url", req.URL, "error", err)
 		http.Error(rw, "Bad Gateway", http.StatusBadGateway)
 	}
 
@@ -283,8 +289,11 @@ func main() {
 	}
 
 	// --- 5. Start the Proxy Server ---
-	log.Infof("Proxy starting on %s, proxying to %s", proxyListenAddr, upstreamAppURL)
-	log.Fatal(http.ListenAndServe(proxyListenAddr, handler)) // Use the custom handler
+	slog.Info("Proxy starting", "listen_addr", proxyListenAddr, "upstream", upstreamAppURL)
+	if err := http.ListenAndServe(proxyListenAddr, handler); err != nil {
+		slog.Error("Proxy server stopped", "error", err)
+		os.Exit(1)
+	}
 }
 
 // fetchJwksPeriodically fetches JWKS from Cloudflare at a regular interval.
@@ -303,7 +312,7 @@ func fetchJwksPeriodically(jwksURL string, interval time.Duration) {
 
 // fetchJwks fetches the JSON Web Key Set from the given URL and updates the global cache.
 func fetchJwks(jwksURL string) {
-	log.Infof("Attempting to fetch JWKS from %s ...", jwksURL)
+	slog.Info("Attempting to fetch JWKS", "url", jwksURL)
 
 	// Create a context with a timeout for the HTTP request.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -311,25 +320,25 @@ func fetchJwks(jwksURL string) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, jwksURL, nil)
 	if err != nil {
-		log.Infof("Error creating JWKS request: %v", err)
+		slog.Error("Error creating JWKS request", "error", err)
 		return
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Infof("Error fetching JWKS from %s: %v", jwksURL, err)
+		slog.Error("Error fetching JWKS", "url", jwksURL, "error", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Infof("Error fetching JWKS from %s: received unexpected status code %d", jwksURL, resp.StatusCode)
+		slog.Error("Error fetching JWKS: unexpected status code", "url", jwksURL, "status_code", resp.StatusCode)
 		return
 	}
 
 	var newJwks jose.JSONWebKeySet // Use go-jose's JWKS type
 	if err := json.NewDecoder(resp.Body).Decode(&newJwks); err != nil {
-		log.Infof("Error decoding JWKS from %s: %v", jwksURL, err)
+		slog.Error("Error decoding JWKS", "url", jwksURL, "error", err)
 		return
 	}
 
@@ -337,7 +346,7 @@ func fetchJwks(jwksURL string) {
 	jwksMutex.Lock()
 	jwtKeySet = &newJwks
 	jwksMutex.Unlock()
-	log.Infoln("JWKS fetched and updated successfully.")
+	slog.Info("JWKS fetched and updated successfully")
 }
 
 // authenticate extracts and validates the Cloudflare Access JWT, then injects its claims into headers.
@@ -355,7 +364,7 @@ func (h *proxyHandler) authenticate(w http.ResponseWriter, r *http.Request) bool
 	}
 
 	if tokenString == "" {
-		log.Info("Authentication Failed: No Cloudflare Access JWT found in 'Cf-Access-Jwt-Assertion' header or 'CF_Authorization' cookie.")
+		slog.Warn("Authentication failed: no Cloudflare Access JWT found")
 		http.Error(w, "Unauthorized: Cloudflare Access JWT missing", http.StatusUnauthorized)
 		return false
 	}
@@ -370,7 +379,7 @@ func (h *proxyHandler) authenticate(w http.ResponseWriter, r *http.Request) bool
 	// With v4, it's recommended to provide expected algorithms during parsing.
 	parsedJWT, err := gojose_jwt.ParseSigned(tokenString, allowedSignatureAlgorithms)
 	if err != nil {
-		log.Infof("Authentication Failed: JWT parsing error: %v", err)
+		slog.Warn("Authentication failed: JWT parsing error", "error", err)
 		http.Error(w, fmt.Sprintf("Unauthorized: Invalid JWT format or unexpected algorithm: %v", err), http.StatusUnauthorized)
 		return false
 	}
@@ -380,7 +389,7 @@ func (h *proxyHandler) authenticate(w http.ResponseWriter, r *http.Request) bool
 	defer jwksMutex.RUnlock()
 
 	if jwtKeySet == nil || len(jwtKeySet.Keys) == 0 {
-		log.Warn("Authentication Failed: JWKS not loaded or is empty. Cannot validate JWT.")
+		slog.Warn("Authentication failed: JWKS not loaded or empty")
 		http.Error(w, "Unauthorized: JWKS not available for validation", http.StatusUnauthorized)
 		return false
 	}
@@ -389,7 +398,7 @@ func (h *proxyHandler) authenticate(w http.ResponseWriter, r *http.Request) bool
 	// This method handles finding the correct key by 'kid' and verifying the signature.
 	var claims gojose_jwt.Claims
 	if err := parsedJWT.Claims(jwtKeySet, &claims); err != nil {
-		log.Infof("Authentication Failed: JWT validation error: %v", err)
+		slog.Warn("Authentication failed: JWT validation error", "error", err)
 		http.Error(w, fmt.Sprintf("Unauthorized: JWT validation failed: %v", err), http.StatusUnauthorized)
 		return false
 	}
@@ -401,7 +410,7 @@ func (h *proxyHandler) authenticate(w http.ResponseWriter, r *http.Request) bool
 		Time:        time.Now(),
 	}
 	if err := claims.Validate(expected); err != nil {
-		log.Infof("Authentication Failed: JWT claims validation error: %v", err)
+		slog.Warn("Authentication failed: JWT claims validation error", "error", err)
 		http.Error(w, fmt.Sprintf("Unauthorized: JWT claims invalid: %v", err), http.StatusUnauthorized)
 		return false
 	}
@@ -412,9 +421,9 @@ func (h *proxyHandler) authenticate(w http.ResponseWriter, r *http.Request) bool
 	r.Header.Set("X-Authenticated-Claims-Issuer", claims.Issuer)
 	if claims.Subject != "" {
 		r.Header.Set("X-Authenticated-Claims-Subject", claims.Subject)
-		log.Infof("Authentication Succeeded for user with subject: %s. JWT Claims injected.", claims.Subject)
+		slog.Info("Authentication succeeded", "subject", claims.Subject)
 	} else {
-		log.Infoln("Authentication Succeeded. JWT Claims injected (subject not present).")
+		slog.Info("Authentication succeeded (subject not present)")
 	}
 
 	// Optionally marshal the full claims object to JSON and add it to a header.
@@ -423,7 +432,7 @@ func (h *proxyHandler) authenticate(w http.ResponseWriter, r *http.Request) bool
 	if h.passJSONClaims {
 		claimsJSON, err := json.Marshal(claims)
 		if err != nil {
-			log.Errorf("Warning: Error marshalling JWT claims to JSON: %v. Skipping X-Authenticated-Claims-JSON header.", err)
+			slog.Warn("Error marshalling JWT claims to JSON, skipping header", "error", err)
 		} else {
 			// Ensure the headers are set on the *original request* `r`
 			// so they are passed to the upstream when `proxy.ServeHTTP` is called.
