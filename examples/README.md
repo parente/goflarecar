@@ -62,10 +62,13 @@ Start the tunnel between Cloudflare and localhost.
 just tunnel
 ```
 
-Visit the application domain name you used when applying the Terraform in your browser. You should
-be prompted to enter your email address to receive 6-digit code. Enter that code and you should see
-the echo server JSON response. Enter any other email or an incorrect code and you shouldn't gain
-access to the echo server app.
+Visit `https://<your-app-domain>` in your browser. You should be prompted to enter your email
+address to receive 6-digit code. Enter that code and you should see the echo server JSON response.
+Enter any other email or an incorrect code and you shouldn't gain access to the echo server app.
+
+Visit `https://<your-aoo-domain>/websocket` in a browser for an interactive WebSocket demo. After
+Cloudflare authentication, the page connects to the same `/websocket` endpoint via WebSocket,
+displays your Cloudflare identity, and lets you send and receive echo messages.
 
 ### For 1Password users
 
