@@ -261,10 +261,9 @@ func main() {
 	// Create a new ReverseProxy instance.
 	rp := httputil.NewSingleHostReverseProxy(upstreamURL)
 
-	// Preserve the original director for standard HTTP requests.
-	originalDirector := rp.Director
-	rp.Director = func(req *http.Request) {
-		originalDirector(req) // Call the original director first
+	// Use Rewrite to configure the outbound request.
+	rp.Rewrite = func(r *httputil.ProxyRequest) {
+		r.SetURL(upstreamURL) // Set the target URL for the outbound request
 		// Note: HTTP headers injected by `authenticate` are already on the request.
 	}
 
