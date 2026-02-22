@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"log/slog"
+	"os"
+
 	"github.com/gorilla/websocket"
-	log "github.com/sirupsen/logrus"
 )
 
 // upgrader is a global WebSocket upgrader. It defines how WebSocket connections are handled,
@@ -41,11 +43,11 @@ func parseJWTClaims(headers http.Header) (map[string]interface{}, string) {
 		var claimsData map[string]interface{}
 		// Attempt to unmarshal the JSON string into a map.
 		if err := json.Unmarshal([]byte(claimsJSONStr), &claimsData); err != nil {
-			log.Errorf("Failed to decode JWT claims: %v", err)
+			slog.Error("Failed to decode JWT claims", "error", err)
 			// Return an error map if JSON decoding fails.
 			return map[string]interface{}{"error": fmt.Sprintf("Invalid JWT claims JSON: %v", err)}, claimsSubject
 		}
-		log.Infof("Parsed JWT claims: %+v", claimsData)
+		slog.Info("Parsed JWT claims", "claims", claimsData)
 		return claimsData, claimsSubject
 	}
 
@@ -58,7 +60,7 @@ func parseJWTClaims(headers http.Header) (map[string]interface{}, string) {
 func fetchCloudflareIdentity(headers http.Header, cfAccessBaseURL string) (map[string]interface{}, error) {
 	// Construct the identity endpoint URL.
 	identityEndpointURL := fmt.Sprintf("%s/cdn-cgi/access/get-identity", cfAccessBaseURL)
-	log.Infof("Fetching identity from: %s", identityEndpointURL)
+	slog.Info("Fetching identity", "url", identityEndpointURL)
 
 	// Prepare headers for the identity request.
 	reqHeaders := make(http.Header)
@@ -69,14 +71,14 @@ func fetchCloudflareIdentity(headers http.Header, cfAccessBaseURL string) (map[s
 	// Prioritize the Cf-Access-Jwt-Assertion header if present, converting it to a cookie.
 	if cfAuthHeader != "" {
 		reqHeaders.Set("Cookie", fmt.Sprintf("CF_Authorization=%s", cfAuthHeader))
-		log.Infof("Forwarding Cf-Access-Jwt-Assertion header as CF_Authorization cookie")
+		slog.Info("Forwarding Cf-Access-Jwt-Assertion header as CF_Authorization cookie")
 	} else if cfAuthCookieValue != "" {
 		// If the assertion header is not present, try to extract CF_Authorization from existing cookies.
 		re := regexp.MustCompile(`CF_Authorization=([^;]+)`)
 		match := re.FindStringSubmatch(cfAuthCookieValue)
 		if len(match) > 1 {
 			reqHeaders.Set("Cookie", fmt.Sprintf("CF_Authorization=%s", match[1]))
-			log.Infof("Forwarding CF_Authorization cookie")
+			slog.Info("Forwarding CF_Authorization cookie")
 		} else {
 			// If CF_Authorization cookie is not found, return an error.
 			return nil, fmt.Errorf("CF_Authorization cookie not found in existing cookies")
@@ -153,14 +155,14 @@ func processRequest(headers http.Header) map[string]interface{} {
 	// Get the issuer URL from the header. This is typically provided by the proxy.
 	issuerURL := headers.Get("X-Authenticated-Claims-Issuer")
 	if issuerURL != "" {
-		log.Infof("Using issuer from header: %s", issuerURL)
+		slog.Info("Using issuer from header", "issuer_url", issuerURL)
 		parsedIssuer, err := url.Parse(issuerURL)
 		if err != nil {
 			responseData["cloudflare_identity_error"] = map[string]string{"error": fmt.Sprintf("Invalid issuer URL: %v", err)}
 		} else if err := validateCloudflareIssuer(parsedIssuer); err != nil {
 			// Reject issuer URLs that do not match the expected Cloudflare Access domain shape
 			// to prevent SSRF via a forged X-Authenticated-Claims-Issuer header.
-			log.Warnf("Rejecting issuer URL %q: %v", issuerURL, err)
+			slog.Warn("Rejecting issuer URL", "issuer_url", issuerURL, "error", err)
 			responseData["cloudflare_identity_error"] = map[string]string{"error": fmt.Sprintf("Untrusted issuer URL: %v", err)}
 		} else {
 			// Construct the base URL for Cloudflare Access.
@@ -175,7 +177,7 @@ func processRequest(headers http.Header) map[string]interface{} {
 				// Log specific identity details if available.
 				if email, ok := identityResult["email"].(string); ok {
 					if uuid, ok := identityResult["user_uuid"].(string); ok {
-						log.Infof("Fetched identity: %s, UUID: %s", email, uuid)
+						slog.Info("Fetched identity", "email", email, "uuid", uuid)
 					}
 				}
 			}
@@ -279,7 +281,7 @@ func handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 	// Marshal response data to indented JSON for embedding in the HTML page.
 	jsonBytes, err := json.MarshalIndent(responseData, "", "  ")
 	if err != nil {
-		log.Errorf("Failed to marshal response data: %v", err)
+		slog.Error("Failed to marshal response data", "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -287,7 +289,7 @@ func handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(statusCode)
 	if err := httpResponsePageTmpl.Execute(w, httpResponsePageData{DataJSON: htmpl.JS(jsonBytes)}); err != nil {
-		log.Errorf("Failed to write HTTP response page: %v", err)
+		slog.Error("Failed to write HTTP response page", "error", err)
 	}
 }
 
@@ -454,14 +456,14 @@ const demoPage = `<!DOCTYPE html>
 // For plain browser GET requests (no Upgrade header) it serves an interactive
 // HTML demo page that connects back to this same endpoint as a WebSocket.
 func websocketEndpoint(w http.ResponseWriter, r *http.Request) {
-	log.Infof("WebSocket connection request for path: %s", r.URL.Path)
+	slog.Info("WebSocket connection request", "path", r.URL.Path)
 
 	// Serve the browser demo page for plain HTTP GET requests.
 	if r.Header.Get("Upgrade") != "websocket" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		if _, err := fmt.Fprint(w, demoPage); err != nil {
-			log.Errorf("Failed to write demo page response: %v", err)
+			slog.Error("Failed to write demo page response", "error", err)
 		}
 		return
 	}
@@ -476,17 +478,17 @@ func websocketEndpoint(w http.ResponseWriter, r *http.Request) {
 	// Upgrade the HTTP connection to a WebSocket connection.
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Errorf("Failed to upgrade WebSocket connection: %v", err)
+		slog.Error("Failed to upgrade WebSocket connection", "error", err)
 		return // Exit if upgrade fails.
 	}
 	defer conn.Close() // Ensure the WebSocket connection is closed when the function exits.
 
 	// Send initial response data (including claims and identity info) to the WebSocket client as JSON.
 	if err := conn.WriteJSON(responseData); err != nil {
-		log.Errorf("Failed to send initial info to WebSocket client for subject %s: %v", claimsSubject, err)
+		slog.Error("Failed to send initial info to WebSocket client", "subject", claimsSubject, "error", err)
 		return // Exit if initial send fails.
 	}
-	log.Infof("Sent initial info to WebSocket client for subject: %s", claimsSubject)
+	slog.Info("Sent initial info to WebSocket client", "subject", claimsSubject)
 
 	// Start a loop to continuously read messages from the WebSocket client.
 	for {
@@ -494,25 +496,27 @@ func websocketEndpoint(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			// Check if the error is a normal WebSocket closure.
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				log.Infof("WebSocket disconnected for subject: %s", claimsSubject)
+				slog.Info("WebSocket disconnected", "subject", claimsSubject)
 			} else {
-				log.Errorf("WebSocket error for subject %s: %v", claimsSubject, err)
+				slog.Error("WebSocket error", "subject", claimsSubject, "error", err)
 			}
 			break // Break the loop on any read error (connection closed or broken).
 		}
-		log.Infof("Received message from %s (type %d): %s", claimsSubject, messageType, string(message))
+		slog.Info("Received WebSocket message", "subject", claimsSubject, "type", messageType, "message", string(message))
 
 		// Echo the received message back to the client.
 		echoMessage := fmt.Sprintf("Echo from server: %s", string(message))
 		if err := conn.WriteMessage(messageType, []byte(echoMessage)); err != nil {
-			log.Errorf("Failed to send echo message to subject %s: %v", claimsSubject, err)
+			slog.Error("Failed to send echo message", "subject", claimsSubject, "error", err)
 			break // Break the loop on any write error.
 		}
 	}
-	log.Infof("WebSocket connection closed for subject: %s", claimsSubject)
+	slog.Info("WebSocket connection closed", "subject", claimsSubject)
 }
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
 	// Register HTTP request handlers for different paths.
 	// handleHTTPRequest will serve all HTTP GET and POST requests to the root path "/".
 	http.HandleFunc("/", handleHTTPRequest)
@@ -524,10 +528,11 @@ func main() {
 	// Construct the full address for the server to listen on.
 	addr := fmt.Sprintf("127.0.0.1:%s", port)
 
-	log.Infof("Starting server on %s", addr)
+	slog.Info("Starting server", "addr", addr)
 	// Start the HTTP server. http.ListenAndServe blocks until the server stops or an error occurs.
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		// If the server fails to start (e.g., port already in use), log a fatal error.
-		log.Fatalf("Server failed to start: %v", err)
+		slog.Error("Server failed to start", "error", err)
+		os.Exit(1)
 	}
 }
