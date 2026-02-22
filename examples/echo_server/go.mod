@@ -1,4 +1,4 @@
-module github.com/parente/cloudflarecar/examples/echo_server
+module github.com/parente/goflarecar/examples/echo_server
 
 go 1.24.2
 
