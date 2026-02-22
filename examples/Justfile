@@ -1,0 +1,28 @@
+CF_ISSUER_URL := env_var_or_default("CF_ISSUER_URL", "https://placeholder.cloudflareaccess.com")
+CF_AUDIENCE_TAG := env_var_or_default("CF_AUDIENCE_TAG", "examplplaceholdere-audience")
+export TUNNEL_TOKEN := env_var_or_default("CF_TUNNEL_TOKEN", "placeholder-tunnel-token")
+
+# List targets
+help:
+	@just --list --unsorted
+
+# Kustomize example cluster resources
+kustomize:
+	#!/bin/bash
+	set -euxo pipefail
+	cd ./echo_sidecar
+
+	cat <<EOF >.configmap.env
+	CF_ISSUER_URL={{CF_ISSUER_URL}}
+	CF_AUDIENCE_TAG={{CF_AUDIENCE_TAG}}
+	EOF
+
+	kustomize build .
+
+# Run a Terraform command
+terraform *args:
+    terraform -chdir=./terraform {{args}}
+
+# Run a cloudflared tunnel
+tunnel:
+	cloudflared tunnel run
