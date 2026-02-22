@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	htmpl "html/template"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -187,6 +188,73 @@ func processRequest(headers http.Header) map[string]interface{} {
 	return responseData
 }
 
+// httpResponsePageData holds the data injected into the HTTP response HTML page.
+type httpResponsePageData struct {
+	DataJSON htmpl.JS
+}
+
+// httpResponsePageTmpl is the HTML template for the HTTP response page.
+// It shares the same card-based layout and CSS as the WebSocket demo page.
+var httpResponsePageTmpl = htmpl.Must(htmpl.New("http").Parse(httpResponsePageTmplStr))
+
+const httpResponsePageTmplStr = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HTTP Echo Demo</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #222; padding: 1.5rem; }
+  h1 { font-size: 1.25rem; margin-bottom: 1rem; }
+  .card { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
+  .card h2 { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em; color: #666; margin-bottom: 0.5rem; }
+  pre { font-size: 0.8rem; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; background: #f9f9f9; border-radius: 4px; padding: 0.5rem; }
+  #loggedInAs { font-size: 0.9rem; color: #374151; }
+  .error { color: #991b1b; }
+</style>
+</head>
+<body>
+<h1>HTTP Echo Demo</h1>
+
+<div class="card">
+  <h2>Cloudflare Identity</h2>
+  <p id="loggedInAs" style="margin-bottom:0.5rem;"></p>
+  <pre id="identity">Loading…</pre>
+</div>
+
+<div class="card">
+  <h2>Full Response Data</h2>
+  <pre id="responseData"></pre>
+</div>
+
+<script>
+var DATA = {{.DataJSON}};
+(function () {
+  var loggedInAsEl  = document.getElementById('loggedInAs');
+  var identityEl    = document.getElementById('identity');
+  var responseDataEl = document.getElementById('responseData');
+
+  var identity = DATA.cloudflare_identity;
+  if (identity) {
+    identityEl.textContent = JSON.stringify(identity, null, 2);
+    if (identity.email) {
+      loggedInAsEl.textContent = 'Logged in as: ' + identity.email;
+    }
+  } else if (DATA.cloudflare_identity_error) {
+    identityEl.className = 'error';
+    identityEl.textContent = JSON.stringify(DATA.cloudflare_identity_error, null, 2);
+  } else {
+    identityEl.textContent = DATA.cloudflare_identity_info || 'No identity data';
+  }
+
+  responseDataEl.textContent = JSON.stringify(DATA, null, 2);
+}());
+</script>
+</body>
+</html>
+`
+
 // handleHTTPRequest processes incoming HTTP GET/POST requests.
 func handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 	// Process the request headers to get claims and Cloudflare identity.
@@ -208,13 +276,18 @@ func handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Set the Content-Type header to application/json.
-	w.Header().Set("Content-Type", "application/json")
-	// Write the determined status code to the response.
+	// Marshal response data to indented JSON for embedding in the HTML page.
+	jsonBytes, err := json.MarshalIndent(responseData, "", "  ")
+	if err != nil {
+		log.Errorf("Failed to marshal response data: %v", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(statusCode)
-	// Encode the response data to JSON and write it to the HTTP response body.
-	if err := json.NewEncoder(w).Encode(responseData); err != nil {
-		log.Errorf("Failed to write HTTP response: %v", err)
+	if err := httpResponsePageTmpl.Execute(w, httpResponsePageData{DataJSON: htmpl.JS(jsonBytes)}); err != nil {
+		log.Errorf("Failed to write HTTP response page: %v", err)
 	}
 }
 
@@ -226,7 +299,7 @@ const demoPage = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WebSocket Demo – Cloudflare Access Protected</title>
+<title>WebSocket Echo Demo</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #222; padding: 1.5rem; }
@@ -254,7 +327,7 @@ const demoPage = `<!DOCTYPE html>
 </style>
 </head>
 <body>
-<h1>WebSocket Demo – Cloudflare Access Protected</h1>
+<h1>WebSocket Echo Demo</h1>
 
 <div class="card">
   <h2>Connection</h2>
