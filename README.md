@@ -1,5 +1,7 @@
 # goflarecar
 
+<img src="./docs/goflarecar-logo.png" alt="Logo of a gopher driving a racecar with flames out the back" height="100px" />
+
 Sidecar proxy for [validating Cloudflare Access
 JWTs](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/).
 Written in Go.
